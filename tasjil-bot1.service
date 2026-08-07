@@ -1,0 +1,16 @@
+[Unit]
+Description=Tasjil Bot — Standalone Self-Polling Daemon (no webhook)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/home/adminisusers/New-bot
+ExecStart=/usr/bin/php /home/adminisusers/New-bot/bot1.php
+Restart=always
+RestartSec=3
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
