@@ -2230,9 +2230,12 @@ function refreshTokenRequestNew(string $refreshToken, string $proxyHost, string 
 function sendDjezzyOTP(string $msisdn): bool
 {
     $q = http_build_query(['scope' => 'smsotp', 'client_id' => CLIENT_ID_OLD, 'msisdn' => $msisdn]);
-    foreach (getAllProxies() as $p) {
-        $pp = parseProxy($p);
-        if (djezzyCurl('https://apim.djezzy.dz/oauth2/registration', $q, $pp['host'], $pp['userpass'], 'otp') === true) return true;
+    $proxies = getAllProxies();
+    for ($pass = 0; $pass < 2; $pass++) { // جولتان كاملتان — بعض بروكسيات الموبايل تُسقط الرد رغم نجاح الطلب فعليًا عند جيزي
+        foreach ($proxies as $p) {
+            $pp = parseProxy($p);
+            if (djezzyCurl('https://apim.djezzy.dz/oauth2/registration', $q, $pp['host'], $pp['userpass'], 'otp') === true) return true;
+        }
     }
     return false;
 }
@@ -2264,9 +2267,12 @@ function djezzyTokenReq(string $msisdn, string $otp, string $ph, string $pa): mi
 function sendDjezzyOTPNew(string $msisdn): bool
 {
     $q = http_build_query(['scope' => 'smsotp', 'client_id' => CLIENT_ID_NEW, 'msisdn' => $msisdn]);
-    foreach (getAllProxies() as $p) {
-        $pp = parseProxy($p);
-        if (djezzyCurl('https://apim.djezzy.dz/oauth2/registration', $q, $pp['host'], $pp['userpass'], 'otp_new') === true) return true;
+    $proxies = getAllProxies();
+    for ($pass = 0; $pass < 2; $pass++) {
+        foreach ($proxies as $p) {
+            $pp = parseProxy($p);
+            if (djezzyCurl('https://apim.djezzy.dz/oauth2/registration', $q, $pp['host'], $pp['userpass'], 'otp_new') === true) return true;
+        }
     }
     return false;
 }
@@ -2566,10 +2572,18 @@ while ($running) {
                         $mid = $m['id'] ?? '';
                         if ($mid === '') continue;
 
+                        $msgText = $m['message'] ?? '';
+                        $eventMessage = ['mid' => $mid, 'text' => $msgText];
+                        // Conversations API لا يكشف معلومات المرفقات/الملصقات إطلاقًا؛
+                        // أي رسالة بلا نص هي غالبًا مرفق (صورة/فيديو/ملصق) — نصنع
+                        // مؤشر attachments يدويًا حتى يتعامل processEvent معها بشكل صحيح
+                        // بدل معاملتها كرسالة فارغة (وإرسال رسالة ترحيب المستخدم الجديد خطأً)
+                        if ($msgText === '') { $eventMessage['attachments'] = [['type' => 'unknown']]; }
+
                         $event = [
                             'sender'    => ['id' => $fromId],
                             'timestamp' => isset($m['created_time']) ? (strtotime($m['created_time']) * 1000) : ($now * 1000),
-                            'message'   => ['mid' => $mid, 'text' => $m['message'] ?? ''],
+                            'message'   => $eventMessage,
                         ];
 
                         if ($CAN_FORK) {
