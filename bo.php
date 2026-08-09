@@ -10,7 +10,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 // ════════ Facebook Config ════════
-define('FB_TOKEN',        'EAAFYLlWaXQkBRmeSVCCkTskO6L3TDqBURP0I1DGsPlZADbPdKqhpJjMtsoP4Cr1bjeMPDHzlOSs0M4dcgW9uZBu6ma96nWqQ3K1qLstmXIXZBeRZBqMFsd7ecjihBU6fODYSZBxdbcy5q32Suz0gWmO05a9qao8E1VB3XRRHUa6db5khqyuuHfVhLYbdiXYpHjG0v53jGkwZDZD');
+define('FB_TOKEN',        'EAAFYLlWaXQkBSDr1JDMym4XP40d5pqlMMyXzyzEYFdD718VonmMArZBQmBDp01sMVdtMkMhckIu1QXpZBZAGLI7YOYPtRgGGV6CnUNaLwdX6ZAlb008As6OZA9Xy04HLLWlXxiObzKdfx6Mx04SdsG86cucr4NPPUr7FZC42MgWKu1aBve0mKDOgpNEJn1QSZBLaNZCVhZCHlcgZDZD');
 define('VERIFY_TOKEN',    'Yacin');
 
 // ════════ Telegram Config ════════
