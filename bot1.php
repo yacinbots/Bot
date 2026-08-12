@@ -18,7 +18,7 @@ if (!$IS_CLI) {
 }
 
 // ════════ Facebook Config ════════
-define('FB_TOKEN',        'EAAFYLlWaXQkBSD9gr170GVkhchLOmWZB3CG8trMYJlt8VxnZCP0ZC6PImfGzlh7Bs41DbOAJWjzva7gYDe10aIyTEQHCbZAONhqWZCZCbfnjR0xZCnJRnlB4ZCBTkWGidLobns8VXIIb2IBuZChwCLENVepPeY6HEghzg1CpyZAy1UhELTpKllwXRsv75OvCiNuQNgoZBfZBhpzrHwZDZD');
+define('FB_TOKEN',        'EAAFYLlWaXQkBSKOLbJTAIwb10m8U4r5UfeLQnbF2XetMzTBWPYOtJZAh7lML3Tk5RfkAOSGNwktPMiFwMfEabw1bdZAF63nwBUVwzdR1HoodJgnb2DWJy3JxfGlLuS3VGJ8A88zPedVZBEWTvYMQJvrZCioVrrISwiD8uMMbNZCDAGZBWTo6mtZAUF57lLFicCuqHXfdZC1qSQZDZD');
 define('VERIFY_TOKEN',    'Yacin');
 
 // ════════ Telegram Config ════════
