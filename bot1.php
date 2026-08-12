@@ -406,19 +406,41 @@ function parseProxy(string $proxy): array
 }
 
 /**
- * getAllProxies — تجميع جميع البروكسيات المتاحة (محلية + API)
+ * getAllProxies — تجميع جميع البروكسيات المتاحة (محلية + API) مع تخزين مؤقت (Cache)
+ * لتفادي إرسال طلب HTTP لجلب قائمة البروكسيات من الخادم الخارجي مع كل طلب Djezzy —
+ * هذا كان يُبطئ كل استدعاء بشكل كبير جداً تحت الضغط (كل استدعاء = طلب شبكة إضافي).
  */
 function getAllProxies(): array
 {
-    $local     = loadProxies();
-    $fromApi   = refreshProxies();
-    $combined  = array_unique(array_merge($local, $fromApi));
-    return array_values($combined);
+    static $memCache = null;
+    static $memCacheTs = 0;
+    $now = time();
+    if ($memCache !== null && ($now - $memCacheTs) < PROXY_CACHE_SECONDS) {
+        return $memCache; // نفس العملية (Worker) تعيد استخدام النتيجة دون إعادة الجلب
+    }
+
+    $cacheFile = PROXY_LIST_FILE . '.combined_cache.json';
+    if (file_exists($cacheFile) && ($now - (int)@filemtime($cacheFile)) < PROXY_CACHE_SECONDS) {
+        $d = json_decode((string)@file_get_contents($cacheFile), true);
+        if (is_array($d) && count($d) > 0) {
+            $memCache = $d; $memCacheTs = $now;
+            return $d;
+        }
+    }
+
+    $local    = loadProxies();
+    $fromApi  = refreshProxies();
+    $combined = array_values(array_unique(array_merge($local, $fromApi)));
+
+    @file_put_contents($cacheFile, json_encode($combined));
+    $memCache = $combined; $memCacheTs = $now;
+    return $combined;
 }
 
 /**
- * curlWithAllProxies — يجرب جميع البروكسيات واحدة تلو الأخرى
- * يُعيد ['http_code', 'body', 'json'] أو null إذا فشلت الكل
+ * curlWithAllProxies — يجرّب مجموعات من البروكسيات بالتوازي (curl_multi) بدل واحد تلو الآخر،
+ * فيأخذ أول استجابة ناجحة من كل دفعة بدل الانتظار التسلسلي الطويل — هذا يقلّص أسوأ زمن انتظار
+ * من عدة دقائق إلى ثوانٍ معدودة تحت الضغط.
  */
 function curlWithAllProxies(
     string $url,
@@ -426,10 +448,11 @@ function curlWithAllProxies(
     string $payload,
     array  $headers,
     string $logTag,
-    int    $timeout = 12,
+    int    $timeout = 8,
     string $logFile = '/tmp/proxy_curl.log'
 ): ?array {
     $proxies = getAllProxies();
+    shuffle($proxies); // توزيع الحمل على كل البروكسيات بدل تكديس الجميع على نفس "الأول" في القائمة
     $totalProxies = count($proxies);
 
     if ($totalProxies === 0) {
@@ -438,54 +461,69 @@ function curlWithAllProxies(
         return null;
     }
 
-    $failedCount = 0;
+    $batchSize = PROXY_PARALLEL_BATCH;
+    $batches   = array_chunk($proxies, $batchSize);
 
-    foreach ($proxies as $idx => $p) {
-        $pp = parseProxy($p);
-        $ch = curl_init($url);
+    foreach ($batches as $batchIdx => $batch) {
+        $mh      = curl_multi_init();
+        $handles = [];
 
-        $opts = [
-            CURLOPT_HTTPHEADER     => $headers,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_ENCODING       => 'gzip',
-            CURLOPT_TIMEOUT        => $timeout,
-            CURLOPT_CONNECTTIMEOUT => 5,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_PROXY          => $pp['host'],
-            CURLOPT_PROXYUSERPWD   => $pp['userpass'],
-            CURLOPT_PROXYTYPE      => CURLPROXY_HTTP,
-            CURLOPT_FOLLOWLOCATION => true,
-        ];
-
-        if ($method === 'POST') {
-            $opts[CURLOPT_POST]       = true;
-            $opts[CURLOPT_POSTFIELDS] = $payload;
-        } else {
-            $opts[CURLOPT_HTTPGET] = true;
+        foreach ($batch as $p) {
+            $pp = parseProxy($p);
+            $ch = curl_init($url);
+            $opts = [
+                CURLOPT_HTTPHEADER     => $headers,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_ENCODING       => 'gzip',
+                CURLOPT_TIMEOUT        => $timeout,
+                CURLOPT_CONNECTTIMEOUT => 4,
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_PROXY          => $pp['host'],
+                CURLOPT_PROXYUSERPWD   => $pp['userpass'],
+                CURLOPT_PROXYTYPE      => CURLPROXY_HTTP,
+                CURLOPT_FOLLOWLOCATION => true,
+            ];
+            if ($method === 'POST') {
+                $opts[CURLOPT_POST]       = true;
+                $opts[CURLOPT_POSTFIELDS] = $payload;
+            } else {
+                $opts[CURLOPT_HTTPGET] = true;
+            }
+            curl_setopt_array($ch, $opts);
+            curl_multi_add_handle($mh, $ch);
+            $handles[] = $ch;
         }
 
-        curl_setopt_array($ch, $opts);
-        $body     = curl_exec($ch);
-        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $errno    = curl_errno($ch);
-        $errMsg   = curl_error($ch);
-        curl_close($ch);
+        // نفّذ كل طلبات الدفعة بالتوازي
+        $running = null;
+        do {
+            curl_multi_exec($mh, $running);
+            curl_multi_select($mh, 0.2);
+        } while ($running > 0);
 
-        $bodyStr = (string)$body;
+        $result = null;
+        foreach ($handles as $idx => $ch) {
+            $body     = curl_multi_getcontent($ch);
+            $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $errno    = curl_errno($ch);
+            $errMsg   = curl_error($ch);
+            $bodyStr  = (string)$body;
 
-        file_put_contents($logFile,
-            date('Y-m-d H:i:s') . " [{$logTag}] proxy[{$idx}/{$totalProxies}] http={$httpCode} errno={$errno} err={$errMsg} body=" . substr($bodyStr, 0, 300) . "\n",
-            FILE_APPEND
-        );
+            file_put_contents($logFile,
+                date('Y-m-d H:i:s') . " [{$logTag}] batch[{$batchIdx}] proxy[{$idx}] http={$httpCode} errno={$errno} err={$errMsg} body=" . substr($bodyStr, 0, 200) . "\n",
+                FILE_APPEND
+            );
 
-        // تخطي البروكسي الفاشل
-        if ($errno || !$body || $httpCode === 0 || stripos($bodyStr, '<html') !== false || stripos($bodyStr, '<!DOCTYPE') !== false) {
-            $failedCount++;
-            continue;
+            $isBad = $errno || !$body || $httpCode === 0 || stripos($bodyStr, '<html') !== false || stripos($bodyStr, '<!DOCTYPE') !== false;
+            if (!$isBad && $result === null) {
+                $result = ['http_code' => $httpCode, 'body' => $bodyStr, 'json' => @json_decode($bodyStr, true)];
+            }
+            curl_multi_remove_handle($mh, $ch);
+            curl_close($ch);
         }
+        curl_multi_close($mh);
 
-        $json = @json_decode($bodyStr, true);
-        return ['http_code' => $httpCode, 'body' => $bodyStr, 'json' => $json];
+        if ($result !== null) return $result; // أول نجاح في الدفعة -> أعِد فوراً دون انتظار البقية
     }
 
     // كل البروكسيات فشلت
